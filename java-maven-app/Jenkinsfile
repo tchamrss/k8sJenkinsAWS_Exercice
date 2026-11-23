@@ -117,10 +117,10 @@ pipeline {
                             kubectl get nodes
 
                             echo "Deploying new image..."
-                            envsubst < kubernetes/deployment.yaml \
-                              | kubectl apply -f -
+                            envsubst < java-maven-app/kubernetes/deployment.yaml \
+                            | kubectl apply -f -
 
-                            kubectl apply -f kubernetes/service.yaml
+                            kubectl apply -f java-maven-app/kubernetes/service.yaml
 
                             echo "Waiting for rollout..."
                             kubectl rollout status deployment/"$APP_NAME" \
