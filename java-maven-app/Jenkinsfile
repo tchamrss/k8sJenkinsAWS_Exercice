@@ -63,7 +63,7 @@ pipeline {
                             variable: 'AWS_ACCESS_KEY_ID'
                         ),
                         string(
-                            credentialsId: 'jenkins-aws_secret-access-key',
+                            credentialsId: 'jenkins-aws_secret_access_key',
                             variable: 'AWS_SECRET_ACCESS_KEY'
                         )
                     ]) {
@@ -98,7 +98,7 @@ pipeline {
                             variable: 'AWS_ACCESS_KEY_ID'
                         ),
                         string(
-                            credentialsId: 'jenkins-aws_secret-access-key',
+                            credentialsId: 'jenkins-aws_secret_access_key',
                             variable: 'AWS_SECRET_ACCESS_KEY'
                         )
                     ]) {
