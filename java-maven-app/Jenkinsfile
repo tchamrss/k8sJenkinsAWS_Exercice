@@ -1,0 +1,168 @@
+
+#!/usr/bin/env groovy
+
+pipeline {
+    agent any
+
+    tools {
+        maven 'Maven'
+    }
+
+    environment {
+        AWS_ACCOUNT_ID = '744456519095'
+        AWS_DEFAULT_REGION = 'eu-central-1'
+        EKS_CLUSTER = 'eks-company-cluster'
+
+        DOCKER_REPO_SERVER = '744456519095.dkr.ecr.eu-central-1.amazonaws.com'
+        DOCKER_REPO = "${DOCKER_REPO_SERVER}/java-maven-app"
+
+        APP_NAME = 'java-maven-app'
+        K8S_NAMESPACE = 'fargate'
+    }
+
+    stages {
+
+        stage('Increment version') {
+            steps {
+                script {
+                    echo 'Incrementing app version...'
+
+                    sh '''
+                            mvn build-helper:parse-version versions:set \
+                            -DnewVersion=\${parsedVersion.majorVersion}.\${parsedVersion.minorVersion}.\${parsedVersion.nextIncrementalVersion} \
+                            versions:commit
+                        '''
+
+                    def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
+                    def version = matcher[0][1]
+
+                    env.IMAGE_NAME = "${version}-${BUILD_NUMBER}"
+
+                    echo "New image version: ${IMAGE_NAME}"
+                }
+            }
+        }
+
+        stage('Build app') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+
+        stage('Build image') {
+            steps {
+                script {
+                    echo 'Building Docker image...'
+
+                    withCredentials([
+                        string(
+                            credentialsId: 'jenkins_aws_access_key_id',
+                            variable: 'AWS_ACCESS_KEY_ID'
+                        ),
+                        string(
+                            credentialsId: 'jenkins-aws_secret-access-key',
+                            variable: 'AWS_SECRET_ACCESS_KEY'
+                        )
+                    ]) {
+                        sh '''
+                            set -e
+
+                            aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
+                              | docker login \
+                                  --username AWS \
+                                  --password-stdin "$DOCKER_REPO_SERVER"
+
+                            docker build --platform linux/amd64 \
+                              -t "$DOCKER_REPO:$IMAGE_NAME" .
+
+                            docker push "$DOCKER_REPO:$IMAGE_NAME"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                script {
+                    echo 'Deploying application to EKS...'
+
+                    withCredentials([
+                        string(
+                            credentialsId: 'jenkins_aws_access_key_id',
+                            variable: 'AWS_ACCESS_KEY_ID'
+                        ),
+                        string(
+                            credentialsId: 'jenkins-aws_secret-access-key',
+                            variable: 'AWS_SECRET_ACCESS_KEY'
+                        )
+                    ]) {
+                        sh '''
+                            set -e
+
+                            echo "Checking AWS identity..."
+                            aws sts get-caller-identity
+
+                            echo "Connecting to EKS..."
+                            aws eks update-kubeconfig \
+                              --region "$AWS_DEFAULT_REGION" \
+                              --name "$EKS_CLUSTER"
+
+                            echo "Checking Kubernetes connection..."
+                            kubectl get nodes
+
+                            echo "Deploying new image..."
+                            envsubst < kubernetes/deployment.yaml \
+                              | kubectl apply -f -
+
+                            kubectl apply -f kubernetes/service.yaml
+
+                            echo "Waiting for rollout..."
+                            kubectl rollout status deployment/"$APP_NAME" \
+                              --namespace "$K8S_NAMESPACE" \
+                              --timeout=300s
+
+                            echo "Deployment successful!"
+                            kubectl get pods -n "$K8S_NAMESPACE" -o wide
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Commit version update') {
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'git-push-credential',
+                            usernameVariable: 'GIT_USER',
+                            passwordVariable: 'GIT_TOKEN'
+                        )
+                    ]) {
+                        sh '''
+                            set -e
+
+                            git config user.name "Jenkins"
+                            git config user.email "jenkins@example.com"
+
+                            git add pom.xml
+
+                            if git diff --cached --quiet; then
+                                echo "No changes to commit"
+                            else
+                                git commit -m "ci: version bump"
+
+                                AUTH=$(printf '%s:%s' "$GIT_USER" "$GIT_TOKEN" \
+                                  | base64 | tr -d '\\n')
+
+                                git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
+                                  push origin HEAD:jenkins-jobs
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
