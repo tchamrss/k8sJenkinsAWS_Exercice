@@ -26,13 +26,15 @@ pipeline {
                 script {
                     echo 'Incrementing app version...'
 
-                    sh '''
-                        mvn build-helper:parse-version versions:set \
-                        -DnewVersion='${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.nextIncrementalVersion}' \
-                        versions:commit
-                    '''
+                    dir('java-maven-app') {
+                        sh '''
+                            mvn build-helper:parse-version versions:set \
+                            -DnewVersion='${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.nextIncrementalVersion}' \
+                            versions:commit
+                        '''
+                    }
 
-                    def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
+                    def matcher = readFile('java-maven-app/pom.xml') =~ '<version>(.+)</version>'
                     def version = matcher[0][1]
 
                     env.IMAGE_NAME = "${version}-${BUILD_NUMBER}"
@@ -44,7 +46,9 @@ pipeline {
 
         stage('Build app') {
             steps {
-                sh 'mvn clean package'
+                dir('java-maven-app') {
+                    sh 'mvn clean package'
+                }
             }
         }
 
@@ -72,7 +76,9 @@ pipeline {
                                   --password-stdin "$DOCKER_REPO_SERVER"
 
                             docker build --platform linux/amd64 \
-                              -t "$DOCKER_REPO:$IMAGE_NAME" .
+                            -t "$DOCKER_REPO:$IMAGE_NAME" \
+                            -f java-maven-app/Dockerfile \
+                            java-maven-app
 
                             docker push "$DOCKER_REPO:$IMAGE_NAME"
                         '''
@@ -145,7 +151,7 @@ pipeline {
                             git config user.name "Jenkins"
                             git config user.email "jenkins@example.com"
 
-                            git add pom.xml
+                            git add java-maven-app/pom.xml
 
                             if git diff --cached --quiet; then
                                 echo "No changes to commit"
